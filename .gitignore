@@ -1,0 +1,90 @@
+# ===========================
+# Python
+# ===========================
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+.eggs/
+.Python
+env/
+venv/
+.venv/
+pip-log.txt
+
+# ===========================
+# Virtual Environments
+# ===========================
+venv/
+.venv/
+ENV/
+env.bak/
+venv.bak/
+
+# ===========================
+# IDE / Editor
+# ===========================
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# ===========================
+# PDF Files (result sheets — sensitive student data)
+# ===========================
+*.pdf
+Result/*.pdf
+Analysis/*.pdf
+
+# ===========================
+# Excel exports
+# ===========================
+*.xlsx
+Result/*.xlsx
+Analysis/*.xlsx
+
+# ===========================
+# SQLite database files
+# ===========================
+*.db
+*.sqlite
+*.sqlite3
+
+# ===========================
+# Logs
+# ===========================
+*.log
+logs/
+
+# ===========================
+# OS generated
+# ===========================
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+desktop.ini
+
+# ===========================
+# Test / temp files
+# ===========================
+test_*.pdf
+temp_*
+*.tmp
+scratch/
+
+# ===========================
+# Compiled assets (keep source only)
+# ===========================
+*.pyc
+*.pyo
