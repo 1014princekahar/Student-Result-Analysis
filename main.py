@@ -674,6 +674,73 @@ class MplCanvas(FigureCanvas):
         fig.patch.set_facecolor('#ffffff') 
         super(MplCanvas, self).__init__(fig)
 
+    def wheelEvent(self, event):
+        # Propagate wheel event to parent scroll area so page scrolling doesn't get stuck over charts
+        event.ignore()
+
+class SmoothScrollArea(QScrollArea):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWidgetResizable(True)
+        self.verticalScrollBar().setSingleStep(30)
+        self.horizontalScrollBar().setSingleStep(30)
+
+    def wheelEvent(self, event):
+        vy = event.angleDelta().y()
+        vx = event.angleDelta().x()
+        
+        # Only accept and handle if we can actually scroll vertically
+        if vy != 0:
+            scrollbar = self.verticalScrollBar()
+            can_scroll = (vy > 0 and scrollbar.value() > scrollbar.minimum()) or                          (vy < 0 and scrollbar.value() < scrollbar.maximum())
+            if can_scroll:
+                scrollbar.setValue(scrollbar.value() - int(vy * 0.75))
+                event.accept()
+                return
+        
+        # Only accept and handle if we can actually scroll horizontally
+        if vx != 0:
+            scrollbar = self.horizontalScrollBar()
+            can_scroll = (vx > 0 and scrollbar.value() > scrollbar.minimum()) or                          (vx < 0 and scrollbar.value() < scrollbar.maximum())
+            if can_scroll:
+                scrollbar.setValue(scrollbar.value() - int(vx * 0.75))
+                event.accept()
+                return
+                
+        event.ignore()
+
+class SmoothTableWidget(QTableWidget):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.setVerticalScrollMode(QAbstractItemView.ScrollPerPixel)
+        self.setHorizontalScrollMode(QAbstractItemView.ScrollPerPixel)
+        self.verticalScrollBar().setSingleStep(25)
+        self.horizontalScrollBar().setSingleStep(25)
+
+    def wheelEvent(self, event):
+        vy = event.angleDelta().y()
+        vx = event.angleDelta().x()
+        
+        # Only scroll the table if it is scrollable in that direction.
+        # Otherwise, ignore it so the event bubbles up to the parent SmoothScrollArea!
+        if vy != 0:
+            scrollbar = self.verticalScrollBar()
+            can_scroll = (vy > 0 and scrollbar.value() > scrollbar.minimum()) or                          (vy < 0 and scrollbar.value() < scrollbar.maximum())
+            if can_scroll:
+                scrollbar.setValue(scrollbar.value() - int(vy * 0.75))
+                event.accept()
+                return
+        
+        if vx != 0:
+            scrollbar = self.horizontalScrollBar()
+            can_scroll = (vx > 0 and scrollbar.value() > scrollbar.minimum()) or                          (vx < 0 and scrollbar.value() < scrollbar.maximum())
+            if can_scroll:
+                scrollbar.setValue(scrollbar.value() - int(vx * 0.75))
+                event.accept()
+                return
+                
+        event.ignore()
+
 class KPICard(QFrame):
     def __init__(self, title, value, color="#0d9488", icon="📊"):
         super().__init__()
@@ -880,13 +947,19 @@ class StudentAnalyzerApp(QMainWindow):
         
         self.db = DatabaseManager()
         self.worker = None
-        self.data_loaded = False 
+        self.data_loaded = False
         self.full_df = pd.DataFrame()
         self.is_collapsed = False
         self.current_pdf_path = ""
-        
+
+        # ── Performance cache ──
+        self._df_cache: pd.DataFrame = pd.DataFrame()   # cached full dataset
+        self._df_dirty: bool = True                      # True = reload from DB next time
+        self._stats_cache: dict = {}                     # cached stats dict
+        self._pages_dirty = {1: True, 2: True, 3: True, 4: True, 5: True, 7: True, 8: True}
+
         self.setStyleSheet(VNSGU_STYLESHEET)
-        
+
         self.init_ui()
         self.setup_shortcuts()
         self.show_splash()
@@ -1489,20 +1562,85 @@ class StudentAnalyzerApp(QMainWindow):
             if item and item.data(Qt.UserRole) == index:
                 self.icon_menu_list.setCurrentItem(item)
                 break
-        
+
         self.stack.setCurrentIndex(index)
-        # Indices: 0=Home, 1=Dashboard, 2=TopN, 3=Failed, 4=Subject, 5=SGPA, 6=Lookup, 7=Settings
-        if index == 1: self.refresh_dashboard()
-        if index == 2: self.update_top_n_analysis()
-        if index == 3: self.refresh_failed_page()
-        if index == 4: self.refresh_my_functions()
-        if index == 5: self.refresh_sgpa_analysis()
-        if index == 6: pass  # Student Lookup — user types their own query
-        if index == 7: self.refresh_settings_page()
-        if index == 8: self.refresh_college_wise()
+        
+        # Refresh page only if it is marked dirty
+        # Indices: 0=Home, 1=Dashboard, 2=TopN, 3=Failed, 4=Subject, 5=SGPA, 6=Lookup, 7=Settings, 8=College
+        if index == 1:
+            if self._pages_dirty.get(1, True):
+                self.refresh_dashboard()
+                self._pages_dirty[1] = False
+        elif index == 2:
+            if self._pages_dirty.get(2, True):
+                self.update_top_n_analysis()
+                self._pages_dirty[2] = False
+        elif index == 3:
+            if self._pages_dirty.get(3, True):
+                self.refresh_failed_page()
+                self._pages_dirty[3] = False
+        elif index == 4:
+            if self._pages_dirty.get(4, True):
+                self.refresh_my_functions()
+                self._pages_dirty[4] = False
+        elif index == 5:
+            if self._pages_dirty.get(5, True):
+                self.refresh_sgpa_analysis()
+                self._pages_dirty[5] = False
+        elif index == 6:
+            pass  # Student Lookup — user types their own query
+        elif index == 7:
+            self.refresh_settings_page()
+        elif index == 8:
+            self.refresh_college_wise()
+
+    # ==========================================================================
+    # DATA CACHE — central helpers so DB is hit only when necessary
+    # ==========================================================================
+    def _invalidate_cache(self):
+        """Call after PDF import or reset — forces next _get_df() to reload."""
+        self._df_cache = pd.DataFrame()
+        self._stats_cache = {}
+        self._df_dirty = True
+        self._pages_dirty = {1: True, 2: True, 3: True, 4: True, 5: True, 7: True, 8: True}
+
+    def _get_df(self) -> pd.DataFrame:
+        """Return cached DataFrame; reload from DB only when dirty."""
+        if self._df_cache.empty:
+            try:
+                self._df_cache = self.sort_by_roll_no(self.db.get_all_data())
+                self.full_df = self._df_cache  # keep full_df in sync
+            except Exception as e:
+                print(f"[_get_df] {e}")
+        return self._df_cache
+
+    def _get_stats(self) -> dict:
+        """Return cached stats dict."""
+        if not self._stats_cache:
+            try:
+                self._stats_cache = self.db.get_stats() or {}
+            except Exception as e:
+                print(f"[_get_stats] {e}")
+        return self._stats_cache
+
+    def _do_filter_table(self):
+        """Debounced search — called 220ms after user stops typing."""
+        text = self.search_bar.text().lower().strip()
+        tbl  = self.table
+        tbl.setUpdatesEnabled(False)
+        for row in range(tbl.rowCount()):
+            name_item = tbl.item(row, 1)
+            roll_item = tbl.item(row, 0)
+            match = (
+                (name_item and text in name_item.text().lower()) or
+                (roll_item and text in roll_item.text().lower())
+            ) if text else True
+            tbl.setRowHidden(row, not match)
+        tbl.setUpdatesEnabled(True)
 
     def unlock_features(self):
         self.data_loaded = True
+        self._invalidate_cache()   # new data — force reload on next page visit
         for i in range(self.menu_list.count()):
             item = self.menu_list.item(i)
             if item:
@@ -1532,7 +1670,7 @@ class StudentAnalyzerApp(QMainWindow):
         page_layout.setContentsMargins(0, 0, 0, 0)
         page_layout.setSpacing(0)
 
-        scroll = QScrollArea()
+        scroll = SmoothScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QFrame.NoFrame)
 
@@ -1550,21 +1688,26 @@ class StudentAnalyzerApp(QMainWindow):
         
         # Search + Export
         self.search_bar = QLineEdit()
-        self.search_bar.setPlaceholderText("🔍  Search by Name or Roll No...")
+        self.search_bar.setPlaceholderText("Search by Name or Roll No...")
         self.search_bar.setFixedWidth(280)
-        self.search_bar.textChanged.connect(self.filter_table)
+        # Debounced search — only fires 220ms after user stops typing
+        self._search_timer = QTimer(self)
+        self._search_timer.setSingleShot(True)
+        self._search_timer.setInterval(220)
+        self._search_timer.timeout.connect(self._do_filter_table)
+        self.search_bar.textChanged.connect(lambda _: self._search_timer.start())
         page_title_row.addWidget(self.search_bar)
         page_title_row.addSpacing(8)
         
-        btn_export = QPushButton("⬇  Export Excel")
+        btn_export = QPushButton("Export Excel")
         btn_export.setCursor(QCursor(Qt.PointingHandCursor))
-        btn_export.clicked.connect(lambda: self.export_to_excel(self.db.get_all_data()))
+        btn_export.clicked.connect(lambda: self.export_to_excel(self._get_df()))
         page_title_row.addWidget(btn_export)
 
-        btn_export_pdf = QPushButton("📄  Export PDF")
+        btn_export_pdf = QPushButton("Export PDF")
         btn_export_pdf.setObjectName("secondary")
         btn_export_pdf.setCursor(QCursor(Qt.PointingHandCursor))
-        btn_export_pdf.clicked.connect(lambda: self.export_to_pdf(self.db.get_all_data()))
+        btn_export_pdf.clicked.connect(lambda: self.export_to_pdf(self._get_df()))
         page_title_row.addWidget(btn_export_pdf)
         
         layout.addLayout(page_title_row)
@@ -1607,7 +1750,7 @@ class StudentAnalyzerApp(QMainWindow):
         # Student Table Section
         table_outer, table_content, _, table_inner = make_section_card("👨‍🎓  Student Results Table", collapsible=False)
         
-        self.table = QTableWidget()
+        self.table = SmoothTableWidget()
         self.table.setColumnCount(12) 
         self.table.setHorizontalHeaderLabels(self.get_subject_headers())
         self.setup_table(self.table, row_height=36)
@@ -1645,7 +1788,7 @@ class StudentAnalyzerApp(QMainWindow):
         page_layout.setContentsMargins(0, 0, 0, 0)
         page_layout.setSpacing(0)
 
-        scroll = QScrollArea()
+        scroll = SmoothScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QFrame.NoFrame)
 
@@ -1739,7 +1882,7 @@ class StudentAnalyzerApp(QMainWindow):
         page_layout.setContentsMargins(0, 0, 0, 0)
         page_layout.setSpacing(0)
 
-        scroll = QScrollArea()
+        scroll = SmoothScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QFrame.NoFrame)
 
@@ -1785,7 +1928,7 @@ class StudentAnalyzerApp(QMainWindow):
         
         # Table Section
         table_outer, _, _, table_inner = make_section_card("🏆  Ranking Table", collapsible=False)
-        self.top_n_table = QTableWidget()
+        self.top_n_table = SmoothTableWidget()
         self.top_n_table.setColumnCount(6)
         self.top_n_table.setHorizontalHeaderLabels(["Rank", "Roll No", "Name", "SGPA", "Total Marks", "Status"])
         self.setup_table(self.top_n_table, row_height=36)
@@ -1851,7 +1994,7 @@ class StudentAnalyzerApp(QMainWindow):
         page_layout.setContentsMargins(0, 0, 0, 0)
         page_layout.setSpacing(0)
 
-        scroll = QScrollArea()
+        scroll = SmoothScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QFrame.NoFrame)
 
@@ -1873,7 +2016,7 @@ class StudentAnalyzerApp(QMainWindow):
         layout.addLayout(header_row)
 
         table_outer, _, _, table_inner = make_section_card("❌  Failed Students Detail", collapsible=False)
-        self.failed_table = QTableWidget()
+        self.failed_table = SmoothTableWidget()
         self.failed_table.setColumnCount(6)
         self.failed_table.setHorizontalHeaderLabels(["Roll No", "Name", "Total Marks", "ATKTs", "Failed Subjects", "Status"])
         self.setup_table(self.failed_table, row_height=68, word_wrap=True)
@@ -1935,7 +2078,7 @@ class StudentAnalyzerApp(QMainWindow):
         page_layout.setContentsMargins(0, 0, 0, 0)
         page_layout.setSpacing(0)
 
-        scroll = QScrollArea()
+        scroll = SmoothScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QFrame.NoFrame)
 
@@ -2037,7 +2180,7 @@ class StudentAnalyzerApp(QMainWindow):
         atkt_header.addWidget(btn_recalculate)
         atkt_layout.addLayout(atkt_header)
         
-        self.atkt_table = QTableWidget()
+        self.atkt_table = SmoothTableWidget()
         self.atkt_table.setColumnCount(5)
         self.atkt_table.setHorizontalHeaderLabels(["Subject Name", "Total Students", "Total Failed", "Total ATKTs", "Failure Rate (%)"])
         self.setup_table(self.atkt_table, row_height=36)
@@ -2075,7 +2218,7 @@ class StudentAnalyzerApp(QMainWindow):
         topper_header.addStretch()
         topper_layout.addLayout(topper_header)
 
-        self.topper_table = QTableWidget()
+        self.topper_table = SmoothTableWidget()
         self.topper_table.setColumnCount(7)
         self.topper_table.setHorizontalHeaderLabels([
             "Rank", "Roll No", "Student Name", "Subject", "Marks", "SGPA", "Status"
@@ -2260,7 +2403,7 @@ class StudentAnalyzerApp(QMainWindow):
         page_layout = QVBoxLayout(page)
         page_layout.setContentsMargins(0, 0, 0, 0)
 
-        scroll = QScrollArea()
+        scroll = SmoothScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QFrame.NoFrame)
 
@@ -2291,7 +2434,7 @@ class StudentAnalyzerApp(QMainWindow):
 
         # Grade breakdown table
         grade_outer, _, _, grade_inner = make_section_card("🎓  Grade-wise Breakdown", collapsible=False)
-        self.grade_table = QTableWidget()
+        self.grade_table = SmoothTableWidget()
         self.grade_table.setColumnCount(3)
         self.grade_table.setHorizontalHeaderLabels(["Grade", "No. of Students", "Percentage (%)"])
         self.setup_table(self.grade_table, row_height=34)
@@ -2370,7 +2513,7 @@ class StudentAnalyzerApp(QMainWindow):
         page_layout = QVBoxLayout(page)
         page_layout.setContentsMargins(0, 0, 0, 0)
 
-        scroll = QScrollArea()
+        scroll = SmoothScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QFrame.NoFrame)
 
@@ -2405,7 +2548,7 @@ class StudentAnalyzerApp(QMainWindow):
         self.lookup_status_lbl.setStyleSheet("color: #64748b; font-size: 13px; padding: 10px 0px;")
         result_inner.addWidget(self.lookup_status_lbl)
 
-        self.lookup_table = QTableWidget()
+        self.lookup_table = SmoothTableWidget()
         self.lookup_table.setColumnCount(7)
         self.lookup_table.setHorizontalHeaderLabels([
             "Roll No", "Name", "Total", "SGPA", "Grade", "Status", "ATKT"
@@ -2431,7 +2574,7 @@ class StudentAnalyzerApp(QMainWindow):
         self.lookup_detail_lbl.setAlignment(Qt.AlignCenter)
         detail_inner.addWidget(self.lookup_detail_lbl)
 
-        self.lookup_marks_table = QTableWidget()
+        self.lookup_marks_table = SmoothTableWidget()
         self.lookup_marks_table.setColumnCount(3)
         self.lookup_marks_table.setHorizontalHeaderLabels(["Subject", "Marks", "Status"])
         self.setup_table(self.lookup_marks_table, row_height=34)
@@ -3478,7 +3621,7 @@ class StudentAnalyzerApp(QMainWindow):
         page_layout.setContentsMargins(0, 0, 0, 0)
         page_layout.setSpacing(0)
 
-        scroll = QScrollArea()
+        scroll = SmoothScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QFrame.NoFrame)
 
@@ -3572,7 +3715,7 @@ class StudentAnalyzerApp(QMainWindow):
         self.col_overview_outer, _, _, col_overview_inner = make_section_card(
             "All Colleges — Overview", collapsible=False
         )
-        self.college_overview_table = QTableWidget()
+        self.college_overview_table = SmoothTableWidget()
         self.college_overview_table.setColumnCount(7)
         self.college_overview_table.setHorizontalHeaderLabels(
             ["College Name", "Total", "Pass", "Fail", "Pass %", "Avg SGPA", "ATKT"])
@@ -3589,7 +3732,7 @@ class StudentAnalyzerApp(QMainWindow):
         # ── Table ─────────────────────────────────────────────────────────
         tbl_outer, _, _, tbl_inner = make_section_card("📋  Students", collapsible=False)
 
-        self.college_table = QTableWidget()
+        self.college_table = SmoothTableWidget()
         self.college_table.setColumnCount(7)
         self.college_table.setHorizontalHeaderLabels(
             ["Roll No", "Name", "SGPA", "Total Marks", "Grade", "Status", "ATKT Count"])
@@ -3616,7 +3759,7 @@ class StudentAnalyzerApp(QMainWindow):
         """Populate college dropdown from DB data."""
         if not self.data_loaded:
             return
-        df = self.db.get_all_data()
+        df = self._get_df()
         if df.empty:
             return
 
@@ -3659,7 +3802,7 @@ class StudentAnalyzerApp(QMainWindow):
                 kpi.lbl_value.setText("—")
             return
 
-        df = self.db.get_all_data()
+        df = self._get_df()
 
         # ── ALL COLLEGES MODE ──────────────────────────────────────────────
         if college == "__ALL__":
@@ -4203,7 +4346,7 @@ class StudentAnalyzerApp(QMainWindow):
         page_layout = QVBoxLayout(page)
         page_layout.setContentsMargins(0, 0, 0, 0)
 
-        scroll = QScrollArea()
+        scroll = SmoothScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QFrame.NoFrame)
 
@@ -4301,7 +4444,7 @@ class StudentAnalyzerApp(QMainWindow):
         col_body.addWidget(self.settings_col_canvas, 5)
 
         # Right: compact summary table
-        self.settings_col_table = QTableWidget()
+        self.settings_col_table = SmoothTableWidget()
         self.settings_col_table.setColumnCount(6)
         self.settings_col_table.setHorizontalHeaderLabels(
             ["College", "Total", "Pass", "Fail", "Pass %", "Avg SGPA"])
@@ -4356,10 +4499,11 @@ class StudentAnalyzerApp(QMainWindow):
     def refresh_settings_page(self):
         if not hasattr(self, 'settings_total_lbl'):
             return
-        df = self.db.get_all_data()
-        total      = len(df)
-        pass_count = len(df[df['status'] == 'PASS']) if not df.empty and 'status' in df.columns else 0
-        fail_count = len(df[df['status'] == 'FAIL']) if not df.empty and 'status' in df.columns else 0
+        df = self._get_df()
+        stats = self._get_stats()
+        total      = stats.get('total_students', len(df))
+        pass_count = stats.get('pass_count', len(df[df['status'] == 'PASS']) if not df.empty and 'status' in df.columns else 0)
+        fail_count = stats.get('fail_count', len(df[df['status'] == 'FAIL']) if not df.empty and 'status' in df.columns else 0)
         self.settings_total_lbl.setText(str(total))
         self.settings_pass_lbl.setText(str(pass_count))
         self.settings_fail_lbl.setText(str(fail_count))
@@ -4720,41 +4864,55 @@ class StudentAnalyzerApp(QMainWindow):
 
     def refresh_dashboard(self):
         try:
-            stats = self.db.get_stats()
-            self.full_df = self.sort_by_roll_no(self.db.get_all_data())
-            
+            stats   = self._get_stats()
+            full_df = self._get_df()
+            self.full_df = full_df
+
             if stats:
-                self.kpi_total.lbl_value.setText(str(stats["total_students"]))
-                self.kpi_pass.lbl_value.setText(f"{stats['pass_perc']}%")
-                self.kpi_fail.lbl_value.setText(f"{stats['fail_perc']}%")
-                self.kpi_topper.lbl_value.setText(str(stats["topper"]))
+                self.kpi_total.lbl_value.setText(str(stats.get("total_students", "0")))
+                self.kpi_pass.lbl_value.setText(f"{stats.get('pass_perc', 0)}%")
+                self.kpi_fail.lbl_value.setText(f"{stats.get('fail_perc', 0)}%")
+                self.kpi_topper.lbl_value.setText(str(stats.get("topper", "N/A")))
             else:
                 self.kpi_total.lbl_value.setText("0")
                 self.kpi_pass.lbl_value.setText("0%")
                 self.kpi_fail.lbl_value.setText("0%")
                 self.kpi_topper.lbl_value.setText("N/A")
 
-            self.table.setSortingEnabled(False)
-            self.table.clearContents()
-            self.table.setRowCount(len(self.full_df))
-            for r_idx, (_, r_data) in enumerate(self.full_df.iterrows()):
-                items = [str(r_data['roll_no']), str(r_data['name'])]
+            # ── Batch table fill — disable sorting + updates during fill ──
+            tbl = self.table
+            tbl.setSortingEnabled(False)
+            tbl.setUpdatesEnabled(False)
+            tbl.clearContents()
+            tbl.setRowCount(len(full_df))
+            for r_idx, (_, r_data) in enumerate(full_df.iterrows()):
+                status = str(r_data.get('status', ''))
+                is_fail = (status == 'FAIL')
+                items = [
+                    str(r_data.get('roll_no', '')),
+                    str(r_data.get('name', '')),
+                ]
                 for i in range(7):
-                    items.append(str(r_data[f'sub_{i+1}']))
-                items.extend([str(r_data['total']), str(r_data['sgpa']), str(r_data['status']), str(r_data['atkt_count'])])
-                
+                    items.append(str(r_data.get(f'sub_{i+1}', '')))
+                items.extend([
+                    str(r_data.get('total', '')),
+                    str(r_data.get('sgpa', '')),
+                    status,
+                    str(r_data.get('atkt_count', 0)),
+                ])
                 for c_idx, txt in enumerate(items):
-                    item = QTableWidgetItem(txt)
-                    if c_idx == 11:  # Status Column
-                        if r_data['status'] == 'FAIL':
-                            item.setForeground(QColor("#ffffff"))
-                            item.setBackground(QColor("#fee2e2"))
-                            item.setForeground(QColor("#dc2626"))
-                        else:
-                            item.setForeground(QColor("#16a34a"))
-                    self.table.setItem(r_idx, c_idx, item)
-            
-            self.update_charts(self.full_df)
+                    itm = QTableWidgetItem(txt)
+                    if c_idx == 11:   # Status column
+                        itm.setForeground(
+                            QColor("#dc2626") if is_fail else QColor("#16a34a")
+                        )
+                    tbl.setItem(r_idx, c_idx, itm)
+            tbl.setUpdatesEnabled(True)
+
+            # Charts — only redraw when dirty (new data)
+            if self._df_dirty:
+                self.update_charts(full_df)
+                self._df_dirty = False
         except Exception as e:
             print(f"Dash Err: {e}")
 
