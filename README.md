@@ -110,7 +110,7 @@ It automatically **parses official VNSGU result PDFs**, extracts per-student and
 
 | Dashboard | College Overview | ATKT Report |
 |-----------|-----------------|-------------|
-| ![Dashboard](assets/screenshot_dashboard.png) | ![College](assets/screenshot_college.png) | ![ATKT](assets/screenshot_atkt.png) |
+| ![Dashboard](assets/dashboard.png) | ![College](assets/college.png) | ![ATKT](assets/atkt.png) |
 
 ---
 
@@ -206,8 +206,8 @@ A **SQL VIEW** (`v_students_flat`) joins all 3 tables into a flat DataFrame for 
 
 ### Step 1 — Clone the repository
 ```bash
-git clone https://github.com/YOUR_USERNAME/student-result-analyzer.git
-cd student-result-analyzer
+git clone https://github.com/1014princekahar/Student-Result-Analysis.git
+cd Student-Result-Analysis
 ```
 
 ### Step 2 — Create a virtual environment (recommended)

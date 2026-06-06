@@ -3547,20 +3547,23 @@ class StudentAnalyzerApp(QMainWindow):
             self.college_kpi_row.addWidget(kpi)
         layout.addLayout(self.college_kpi_row)
 
-        # ── Chart row (visible only in All-Colleges mode) ──────────────────
+        # Chart row (visible only in All-Colleges mode)
         self.college_chart_outer = QFrame()
         self.college_chart_outer.setObjectName("card")
+        self.college_chart_outer.setMinimumHeight(420)
         chart_row_layout = QHBoxLayout(self.college_chart_outer)
-        chart_row_layout.setContentsMargins(12, 12, 12, 12)
-        chart_row_layout.setSpacing(14)
+        chart_row_layout.setContentsMargins(16, 16, 16, 16)
+        chart_row_layout.setSpacing(18)
 
-        # Bar chart — Pass% per college
-        self.col_bar_canvas = MplCanvas(self, width=5, height=3.6, dpi=90)
-        chart_row_layout.addWidget(self.col_bar_canvas, 3)
+        # Bar chart — Pass% per college (bigger, clearer)
+        self.col_bar_canvas = MplCanvas(self, width=7, height=4.8, dpi=96)
+        self.col_bar_canvas.setMinimumSize(400, 340)
+        chart_row_layout.addWidget(self.col_bar_canvas, 6)
 
-        # Pie chart — overall pass/fail among all students
-        self.col_pie_canvas = MplCanvas(self, width=3.2, height=3.6, dpi=90)
-        chart_row_layout.addWidget(self.col_pie_canvas, 2)
+        # Pie chart — overall pass/fail
+        self.col_pie_canvas = MplCanvas(self, width=4, height=4.8, dpi=96)
+        self.col_pie_canvas.setMinimumSize(260, 340)
+        chart_row_layout.addWidget(self.col_pie_canvas, 4)
 
         self.college_chart_outer.setVisible(False)
         layout.addWidget(self.college_chart_outer)
@@ -3871,6 +3874,293 @@ class StudentAnalyzerApp(QMainWindow):
                         item.setBackground(QColor("#fef2f2"))
                 self.college_table.setItem(r_idx, c_idx, item)
 
+    # ------------------------------------------------------------------
+    # All-Colleges PDF: sirf charts (graphs-only)
+    # ------------------------------------------------------------------
+    def generate_college_overview_pdf(self, path: str):
+        """
+        All Colleges PDF — sirf 2 charts:
+          Page 1: College-wise Pass % horizontal bar chart
+          Page 2: Overall Pass/Fail pie + College summary stats box
+        """
+        import matplotlib
+        matplotlib.use('Agg')
+        import matplotlib.pyplot as plt
+        import matplotlib.gridspec as gridspec
+        from reportlab.platypus import (SimpleDocTemplate, Spacer, Image as RLImage,
+                                         Paragraph, Table, TableStyle, PageBreak)
+        from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+        from reportlab.lib.units import inch
+        from reportlab.lib.pagesizes import A4, landscape
+        from reportlab.lib import colors
+        import tempfile, os
+
+        pdf_header_path = self._select_pdf_header_path()
+        header_img_exists = os.path.exists(pdf_header_path)
+
+        page_w, page_h = landscape(A4)
+        margin = 0.5 * inch
+
+        # Styles
+        styles = getSampleStyleSheet()
+        title_style = ParagraphStyle(
+            'ct', fontName='Helvetica-Bold', fontSize=15,
+            textColor=colors.HexColor('#0c1a3a'), spaceAfter=6
+        )
+        sub_style = ParagraphStyle(
+            'cs', fontName='Helvetica', fontSize=9,
+            textColor=colors.HexColor('#64748b'), spaceAfter=12
+        )
+        hdr_style = ParagraphStyle(
+            'ch', fontName='Helvetica-Bold', fontSize=7.5,
+            textColor=colors.white
+        )
+        cell_style = ParagraphStyle(
+            'cc', fontName='Helvetica', fontSize=8,
+            textColor=colors.HexColor('#1e293b')
+        )
+
+        story = []
+
+        # Header image
+        if header_img_exists:
+            from reportlab.lib.utils import ImageReader
+            try:
+                _ir  = ImageReader(pdf_header_path)
+                _iw, _ih = _ir.getSize()
+                hdr_h = min((_ih / _iw) * page_w, 1.8 * inch)
+                story.append(RLImage(pdf_header_path, width=page_w - 2*margin, height=hdr_h))
+                story.append(Spacer(1, 0.15 * inch))
+            except Exception:
+                pass
+
+        session = self.db.get_session_info()
+        course_txt = (
+            f"{session.get('course', '')}  |  "
+            f"{session.get('semester', '')}  |  "
+            f"{session.get('academic_year', '')}"
+        ).strip(" |")
+        story.append(Paragraph("All Colleges — Overview Report", title_style))
+        if course_txt:
+            story.append(Paragraph(course_txt, sub_style))
+
+        college_stats = self.db.get_college_stats()
+        df_all = self.db.get_all_data()
+
+        if college_stats.empty or df_all.empty:
+            story.append(Paragraph("No data available.", styles['Normal']))
+            SimpleDocTemplate(path, pagesize=landscape(A4)).build(story)
+            return
+
+        total  = len(df_all)
+        passed = int((df_all['status'] == 'PASS').sum())
+        failed = total - passed
+        names  = [str(n) for n in college_stats['college']]
+        ppercs = college_stats['pass_percentage'].fillna(0).tolist()
+        pass_counts = college_stats['pass_count'].tolist()
+        fail_counts = college_stats['fail_count'].tolist()
+        total_counts = college_stats['total_students'].tolist()
+
+        tmp_files = []
+
+        # ── Chart 1: Horizontal Bar — College-wise Pass % ──
+        fig1, ax1 = plt.subplots(figsize=(11, max(3.5, len(names) * 0.65)))
+        fig1.patch.set_facecolor('#ffffff')
+        ax1.set_facecolor('#f8fafc')
+
+        bar_colors = ['#16a34a' if p >= 50 else '#dc2626' for p in ppercs]
+        y_pos = range(len(names))
+        bars = ax1.barh(list(y_pos), ppercs, color=bar_colors,
+                        edgecolor='white', linewidth=1.4, height=0.55)
+
+        for bar, val, pc, fc, tc in zip(bars, ppercs, pass_counts, fail_counts, total_counts):
+            ax1.text(min(val + 1, 102), bar.get_y() + bar.get_height() / 2,
+                     f"{val:.1f}%  (Pass: {int(pc)} / Fail: {int(fc)} / Total: {int(tc)})",
+                     va='center', ha='left', fontsize=8.5,
+                     color='#0c1a3a', fontweight='bold')
+
+        ax1.set_yticks(list(y_pos))
+        ax1.set_yticklabels(names, fontsize=9)
+        ax1.set_xlim(0, 130)
+        ax1.set_xlabel("Pass Percentage (%)", fontsize=10, color='#475569')
+        ax1.set_title("College-wise Pass Percentage",
+                      fontsize=13, fontweight='bold', color='#0c1a3a', pad=12)
+        ax1.axvline(x=50, color='#f97316', linewidth=1.8,
+                    linestyle='--', label='50% threshold')
+        ax1.legend(fontsize=8, loc='lower right')
+        ax1.tick_params(colors='#64748b', labelsize=8.5)
+        for sp in ['top', 'right']:
+            ax1.spines[sp].set_visible(False)
+        ax1.spines['left'].set_color('#e2e8f0')
+        ax1.spines['bottom'].set_color('#e2e8f0')
+        ax1.grid(axis='x', color='#e2e8f0', linewidth=0.8)
+        fig1.tight_layout()
+
+        tmp1 = tempfile.NamedTemporaryFile(suffix='.png', delete=False)
+        fig1.savefig(tmp1.name, dpi=160, bbox_inches='tight',
+                     facecolor='#ffffff')
+        plt.close(fig1)
+        tmp_files.append(tmp1.name)
+
+        # Add bar chart image — full width
+        img1 = RLImage(tmp1.name,
+                       width=page_w - 2 * margin,
+                       height=min(len(names) * 0.65 * inch + 1.2 * inch, page_h * 0.65))
+        story.append(img1)
+        story.append(PageBreak())
+
+        # Header image page 2
+        if header_img_exists:
+            try:
+                story.append(RLImage(pdf_header_path, width=page_w - 2*margin, height=hdr_h))
+                story.append(Spacer(1, 0.15 * inch))
+            except Exception:
+                pass
+
+        # ── Chart 2: Pie + Summary ──
+        fig2 = plt.figure(figsize=(11, 5.5))
+        fig2.patch.set_facecolor('#ffffff')
+        gs = gridspec.GridSpec(1, 2, width_ratios=[1, 1.6], figure=fig2)
+
+        # Pie chart
+        ax_pie = fig2.add_subplot(gs[0])
+        ax_pie.set_facecolor('#ffffff')
+        if passed + failed > 0:
+            wedge_p, texts_p, auto_p = ax_pie.pie(
+                [passed, failed],
+                labels=[f"Passed\n{passed}", f"Failed\n{failed}"],
+                autopct='%1.1f%%',
+                startangle=90,
+                colors=['#0d9488', '#f97316'],
+                wedgeprops={'linewidth': 3, 'edgecolor': 'white'},
+                textprops={'fontsize': 10, 'fontweight': 'bold', 'color': '#0c1a3a'}
+            )
+            for ap in auto_p:
+                ap.set_fontsize(9)
+        ax_pie.set_title(f"Overall Pass / Fail\n(Total: {total} students)",
+                         fontsize=11, fontweight='bold', color='#0c1a3a')
+
+        # Grouped bar: per-college pass vs fail count
+        ax_bar2 = fig2.add_subplot(gs[1])
+        ax_bar2.set_facecolor('#f8fafc')
+        import numpy as np
+        x = np.arange(len(names))
+        w = 0.35
+        bars_p = ax_bar2.bar(x - w/2, pass_counts, w,
+                              label='Pass', color='#0d9488',
+                              edgecolor='white', linewidth=1.2)
+        bars_f = ax_bar2.bar(x + w/2, fail_counts, w,
+                              label='Fail', color='#f97316',
+                              edgecolor='white', linewidth=1.2)
+        for b in bars_p:
+            v = b.get_height()
+            if v > 0:
+                ax_bar2.text(b.get_x() + b.get_width()/2, v + 0.3,
+                             str(int(v)), ha='center', va='bottom',
+                             fontsize=7.5, fontweight='bold', color='#0d9488')
+        for b in bars_f:
+            v = b.get_height()
+            if v > 0:
+                ax_bar2.text(b.get_x() + b.get_width()/2, v + 0.3,
+                             str(int(v)), ha='center', va='bottom',
+                             fontsize=7.5, fontweight='bold', color='#dc2626')
+
+        ax_bar2.set_xticks(x)
+        ax_bar2.set_xticklabels(
+            [n[:14] for n in names],
+            rotation=20, ha='right', fontsize=8.5
+        )
+        ax_bar2.set_ylabel("Students", fontsize=9, color='#475569')
+        ax_bar2.set_title("Pass vs Fail per College",
+                          fontsize=11, fontweight='bold', color='#0c1a3a')
+        ax_bar2.legend(fontsize=9)
+        for sp in ['top', 'right']:
+            ax_bar2.spines[sp].set_visible(False)
+        ax_bar2.spines['left'].set_color('#e2e8f0')
+        ax_bar2.spines['bottom'].set_color('#e2e8f0')
+        ax_bar2.grid(axis='y', color='#e2e8f0', linewidth=0.8)
+        ax_bar2.tick_params(colors='#64748b')
+
+        fig2.suptitle("All Colleges — Result Summary",
+                      fontsize=14, fontweight='bold',
+                      color='#0c1a3a', y=1.01)
+        fig2.tight_layout()
+
+        tmp2 = tempfile.NamedTemporaryFile(suffix='.png', delete=False)
+        fig2.savefig(tmp2.name, dpi=160, bbox_inches='tight',
+                     facecolor='#ffffff')
+        plt.close(fig2)
+        tmp_files.append(tmp2.name)
+
+        story.append(RLImage(tmp2.name,
+                             width=page_w - 2 * margin,
+                             height=(page_h - 3 * inch) * 0.8))
+        story.append(Spacer(1, 0.25 * inch))
+
+        # College stats summary table
+        tbl_hdrs = ["College Name", "Total", "Pass", "Fail", "Pass %", "Avg SGPA"]
+        tbl_data = [[Paragraph(h, hdr_style) for h in tbl_hdrs]]
+        row_bgs  = [colors.HexColor('#f0fdf4'), colors.HexColor('#fef2f2'),
+                    colors.HexColor('#eff6ff'), colors.HexColor('#fefce8'),
+                    colors.HexColor('#fdf4ff'), colors.HexColor('#fff7ed')]
+        ts_extra = []
+        for r_idx, (_, row) in enumerate(college_stats.iterrows(), start=1):
+            pp  = row.get('pass_percentage', 0)
+            sg  = row.get('avg_sgpa', None)
+            tbl_data.append([
+                Paragraph(str(row.get('college', '')), cell_style),
+                str(int(row.get('total_students', 0))),
+                str(int(row.get('pass_count', 0))),
+                str(int(row.get('fail_count', 0))),
+                f"{pp:.1f}%",
+                f"{sg:.2f}" if sg and sg == sg else "--",
+            ])
+            ts_extra.append(('BACKGROUND', (0, r_idx), (-1, r_idx),
+                             row_bgs[r_idx % len(row_bgs)]))
+            fc = colors.HexColor('#16a34a') if pp >= 50 else colors.HexColor('#dc2626')
+            ts_extra.append(('TEXTCOLOR', (4, r_idx), (4, r_idx), fc))
+
+        cw = page_w - 2 * margin
+        col_ws = [cw * 0.38, cw * 0.1, cw * 0.1, cw * 0.1, cw * 0.12, cw * 0.2]
+        tbl = Table(tbl_data, colWidths=col_ws, repeatRows=1)
+        tbl.setStyle(TableStyle([
+            ('BACKGROUND',    (0, 0), (-1, 0), colors.HexColor('#0c1a3a')),
+            ('TEXTCOLOR',     (0, 0), (-1, 0), colors.white),
+            ('FONTNAME',      (0, 0), (-1, 0), 'Helvetica-Bold'),
+            ('FONTSIZE',      (0, 0), (-1, -1), 8.5),
+            ('GRID',          (0, 0), (-1, -1), 0.4, colors.HexColor('#e2e8f0')),
+            ('VALIGN',        (0, 0), (-1, -1), 'MIDDLE'),
+            ('ALIGN',         (1, 0), (-1, -1), 'CENTER'),
+            ('TOPPADDING',    (0, 0), (-1, -1), 6),
+            ('BOTTOMPADDING', (0, 0), (-1, -1), 6),
+            ('LEFTPADDING',   (0, 0), (-1, -1), 8),
+            *ts_extra,
+        ]))
+        story.append(tbl)
+
+        # Footer note
+        story.append(Spacer(1, 0.3 * inch))
+        story.append(Paragraph(
+            f"{COURSE_NAME}  |  Generated: {pd.Timestamp.now().strftime('%d-%b-%Y %H:%M')}",
+            ParagraphStyle('ft', fontName='Helvetica', fontSize=7.5,
+                           textColor=colors.HexColor('#94a3b8'))
+        ))
+
+        doc = SimpleDocTemplate(
+            path,
+            pagesize=landscape(A4),
+            leftMargin=margin, rightMargin=margin,
+            topMargin=margin, bottomMargin=margin
+        )
+        doc.build(story)
+
+        # Cleanup temp images
+        for f in tmp_files:
+            try:
+                os.unlink(f)
+            except Exception:
+                pass
+
     def _export_college_excel(self):
         college = self.college_combo.currentData()
         if not college:
@@ -3999,20 +4289,60 @@ class StudentAnalyzerApp(QMainWindow):
         actions_inner.addLayout(action_row_2)
         layout.addWidget(actions_outer)
 
+        # ── College Overview Card ────────────────────────────────────────────────
+        col_outer, _, _, col_inner = make_section_card("College Overview", collapsible=True)
+
+        # Mini chart + table side by side
+        col_body = QHBoxLayout()
+        col_body.setSpacing(16)
+
+        # Left: mini horizontal bar chart
+        self.settings_col_canvas = MplCanvas(self, width=4.5, height=3.2, dpi=88)
+        col_body.addWidget(self.settings_col_canvas, 5)
+
+        # Right: compact summary table
+        self.settings_col_table = QTableWidget()
+        self.settings_col_table.setColumnCount(6)
+        self.settings_col_table.setHorizontalHeaderLabels(
+            ["College", "Total", "Pass", "Fail", "Pass %", "Avg SGPA"])
+        self.setup_table(self.settings_col_table, row_height=32)
+        self.settings_col_table.setMinimumHeight(180)
+        self.settings_col_table.setMaximumHeight(320)
+        sc_hdr = self.settings_col_table.horizontalHeader()
+        sc_hdr.setSectionResizeMode(0, QHeaderView.Stretch)
+        for ci in range(1, 6):
+            sc_hdr.setSectionResizeMode(ci, QHeaderView.ResizeToContents)
+        col_body.addWidget(self.settings_col_table, 6)
+
+        col_inner.addLayout(col_body)
+
+        # "Go to College Report" button
+        go_col_btn = QPushButton("Open College Wise Report")
+        go_col_btn.setObjectName("secondary")
+        go_col_btn.setFixedWidth(230)
+        go_col_btn.setCursor(QCursor(Qt.PointingHandCursor))
+        go_col_btn.clicked.connect(lambda: (
+            self.switch_page(8),
+            self.refresh_college_wise()
+        ))
+        col_inner.addSpacing(6)
+        col_inner.addWidget(go_col_btn)
+        layout.addWidget(col_outer)
+
         # Reset / Danger Zone
-        danger_outer, _, _, danger_inner = make_section_card("⚠  Reset Application", collapsible=False)
+        danger_outer, _, _, danger_inner = make_section_card("Reset Application", collapsible=False)
         danger_inner.parent().setStyleSheet("QFrame#section_content_card { background: #fff7f7; border-radius: 0px 0px 6px 6px; }")
-        
+
         danger_desc = QLabel("Clear all in-memory result data and lock analysis pages until a new PDF is uploaded.")
         danger_desc.setWordWrap(True)
         danger_desc.setStyleSheet("color: #64748b; font-size: 13px;")
-        
-        reset_btn = QPushButton("🗑  Reset Application")
+
+        reset_btn = QPushButton("Reset Application")
         reset_btn.setObjectName("danger")
         reset_btn.setCursor(QCursor(Qt.PointingHandCursor))
         reset_btn.setFixedWidth(220)
         reset_btn.clicked.connect(self.clear_db)
-        
+
         danger_inner.addWidget(danger_desc)
         danger_inner.addSpacing(10)
         danger_inner.addWidget(reset_btn)
@@ -4027,13 +4357,95 @@ class StudentAnalyzerApp(QMainWindow):
         if not hasattr(self, 'settings_total_lbl'):
             return
         df = self.db.get_all_data()
-        total = len(df)
+        total      = len(df)
         pass_count = len(df[df['status'] == 'PASS']) if not df.empty and 'status' in df.columns else 0
         fail_count = len(df[df['status'] == 'FAIL']) if not df.empty and 'status' in df.columns else 0
         self.settings_total_lbl.setText(str(total))
         self.settings_pass_lbl.setText(str(pass_count))
         self.settings_fail_lbl.setText(str(fail_count))
         self.settings_parser_lbl.setText("Ready" if PARSER_LOADED else "Missing")
+
+        # ── College Overview ──
+        if not hasattr(self, 'settings_col_table') or not hasattr(self, 'settings_col_canvas'):
+            return
+        try:
+            college_stats = self.db.get_college_stats()
+            if college_stats.empty:
+                self.settings_col_table.setRowCount(0)
+                return
+
+            # Populate table
+            self.settings_col_table.setRowCount(len(college_stats))
+            row_bg = ["#f0fdf4", "#fef2f2", "#eff6ff", "#fefce8",
+                      "#fdf4ff", "#fff7ed", "#f0fdfa"]
+            for r_idx, (_, row) in enumerate(college_stats.iterrows()):
+                tot_r  = int(row.get('total_students', 0))
+                pass_r = int(row.get('pass_count', 0))
+                fail_r = int(row.get('fail_count', 0))
+                pp_r   = row.get('pass_percentage', 0)
+                sg_r   = row.get('avg_sgpa', None)
+                row_vals = [
+                    str(row.get('college', '')),
+                    str(tot_r),
+                    str(pass_r),
+                    str(fail_r),
+                    f"{pp_r:.1f}%",
+                    f"{sg_r:.2f}" if sg_r and sg_r == sg_r else "--",
+                ]
+                bg = QColor(row_bg[r_idx % len(row_bg)])
+                for c_idx, val in enumerate(row_vals):
+                    item = QTableWidgetItem(val)
+                    item.setTextAlignment(
+                        Qt.AlignLeft | Qt.AlignVCenter if c_idx == 0 else Qt.AlignCenter
+                    )
+                    item.setBackground(bg)
+                    if c_idx == 4:   # Pass % column: color
+                        try:
+                            item.setForeground(
+                                QColor("#16a34a") if float(str(pp_r)) >= 50 else QColor("#dc2626")
+                            )
+                        except Exception:
+                            pass
+                    self.settings_col_table.setItem(r_idx, c_idx, item)
+
+            # Mini bar chart
+            tc = '#0c1a3a'
+            names  = [str(n)[:16] for n in college_stats['college']]
+            ppercs = college_stats['pass_percentage'].fillna(0).tolist()
+            colors = ['#16a34a' if p >= 50 else '#dc2626' for p in ppercs]
+
+            self.settings_col_canvas.fig.patch.set_facecolor('#ffffff')
+            self.settings_col_canvas.axes.clear()
+            self.settings_col_canvas.axes.set_facecolor('#f8fafc')
+
+            bars = self.settings_col_canvas.axes.barh(
+                names, ppercs, color=colors, edgecolor='#ffffff', linewidth=1.2
+            )
+            for bar, val in zip(bars, ppercs):
+                self.settings_col_canvas.axes.text(
+                    min(val + 1.5, 103), bar.get_y() + bar.get_height() / 2,
+                    f"{val:.0f}%", va='center', ha='left',
+                    fontsize=8, color=tc, fontweight='bold'
+                )
+            self.settings_col_canvas.axes.set_xlim(0, 115)
+            self.settings_col_canvas.axes.set_xlabel("Pass %", color='#64748b', fontsize=8)
+            self.settings_col_canvas.axes.set_title(
+                "College-wise Pass %", color=tc, fontsize=10, fontweight='bold'
+            )
+            self.settings_col_canvas.axes.axvline(
+                x=50, color='#f97316', linewidth=1.2, linestyle='--'
+            )
+            self.settings_col_canvas.axes.tick_params(colors='#64748b', labelsize=7.5)
+            self.settings_col_canvas.axes.spines['top'].set_visible(False)
+            self.settings_col_canvas.axes.spines['right'].set_visible(False)
+            self.settings_col_canvas.axes.spines['left'].set_color('#e2e8f0')
+            self.settings_col_canvas.axes.spines['bottom'].set_color('#e2e8f0')
+            self.settings_col_canvas.axes.grid(axis='x', color='#e2e8f0', linewidth=0.6)
+            self.settings_col_canvas.fig.tight_layout()
+            self.settings_col_canvas.draw()
+
+        except Exception as e:
+            print(f"[Settings ColOverview] {e}")
 
     # --- Logic Methods ---
     def filter_table(self, text):
