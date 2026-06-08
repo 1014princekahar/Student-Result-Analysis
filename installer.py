@@ -263,12 +263,10 @@ class InstallWorker(QThread):
             icon = os.path.normpath(os.path.join(self.dest_dir, "assets", "icon.ico"))
             
             # PowerShell script to create shortcut with icon index 0 (single backslashes)
-            # We escape double quotes in args with a backtick (`) for PowerShell
-            args_escaped = args.replace('"', '`"')
             ps_script = (
                 f"$s = (New-Object -ComObject WScript.Shell).CreateShortcut('{shortcut_path}'); "
                 f"$s.TargetPath = '{target}'; "
-                f"$s.Arguments = '{args_escaped}'; "
+                f"$s.Arguments = '{args}'; "
                 f"$s.WorkingDirectory = '{working_dir}'; "
                 f"$s.IconLocation = '{icon},0'; "
                 f"$s.Save()"
