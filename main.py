@@ -48,8 +48,15 @@ from reportlab.platypus import SimpleDocTemplate, Table as PdfTable, TableStyle,
 # ==============================================================================
 # 1. PATHS & ASSETS
 # ==============================================================================
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-ASSETS_DIR = os.path.join(BASE_DIR, 'assets')
+if getattr(sys, 'frozen', False):
+    # Running in a PyInstaller bundle
+    BASE_DIR = os.path.dirname(sys.executable)
+    ASSETS_DIR = os.path.join(sys._MEIPASS, 'assets')
+else:
+    # Running in a normal Python environment
+    BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+    ASSETS_DIR = os.path.join(BASE_DIR, 'assets')
+
 LOGO_PATH = os.path.join(ASSETS_DIR, 'logo.png')
 ICON_PATH = os.path.join(ASSETS_DIR, 'icon.ico')
 SASCMA_PDF_HEADER_PATH = os.path.join(ASSETS_DIR, 'sascma_pdf_header.png')
