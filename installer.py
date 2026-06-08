@@ -106,11 +106,10 @@ class InstallWorker(QThread):
     log = Signal(str)
     finished = Signal(bool, str)
 
-    def __init__(self, dest_dir, create_shortcut, start_app):
+    def __init__(self, dest_dir, create_shortcut):
         super().__init__()
         self.dest_dir = dest_dir
         self.create_shortcut = create_shortcut
-        self.start_app = start_app
         self.python_path = "python" # fallback
 
     def run(self):
@@ -263,20 +262,15 @@ class InstallWorker(QThread):
             working_dir = os.path.normpath(self.dest_dir)
             icon = os.path.normpath(os.path.join(self.dest_dir, "assets", "icon.ico"))
             
-            # Double backslashes for PowerShell to ensure no escaping issues
-            shortcut_path_ps = shortcut_path.replace('\\', '\\\\')
-            target_ps = target.replace('\\', '\\\\')
-            args_ps = args.replace('\\', '\\\\')
-            working_dir_ps = working_dir.replace('\\', '\\\\')
-            icon_ps = icon.replace('\\', '\\\\')
-
-            # PowerShell script to create shortcut with icon index 0
+            # PowerShell script to create shortcut with icon index 0 (single backslashes)
+            # We escape double quotes in args with a backtick (`) for PowerShell
+            args_escaped = args.replace('"', '`"')
             ps_script = (
-                f"$s = (New-Object -ComObject WScript.Shell).CreateShortcut('{shortcut_path_ps}'); "
-                f"$s.TargetPath = '{target_ps}'; "
-                f"$s.Arguments = '{args_ps}'; "
-                f"$s.WorkingDirectory = '{working_dir_ps}'; "
-                f"$s.IconLocation = '{icon_ps},0'; "
+                f"$s = (New-Object -ComObject WScript.Shell).CreateShortcut('{shortcut_path}'); "
+                f"$s.TargetPath = '{target}'; "
+                f"$s.Arguments = '{args_escaped}'; "
+                f"$s.WorkingDirectory = '{working_dir}'; "
+                f"$s.IconLocation = '{icon},0'; "
                 f"$s.Save()"
             )
             subprocess.run(["powershell", "-NoProfile", "-Command", ps_script], check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
@@ -480,26 +474,28 @@ class InstallerApp(QMainWindow):
         
         desc = QLabel(
             "Student Result Analyzer has been successfully installed on your computer.\n\n"
-            "You can launch the application from your desktop shortcut or run it directly."
+            "You can launch the application now or use the Desktop shortcut created for you."
         )
         desc.setObjectName("info_text")
-        
-        self.run_cb = QCheckBox("Run Student Result Analyzer now")
-        self.run_cb.setChecked(True)
-        self.run_cb.setStyleSheet("QCheckBox { spacing: 8px; color: #f1f5f9; }")
 
         layout.addWidget(title)
         layout.addWidget(subtitle)
         layout.addWidget(desc)
-        layout.addWidget(self.run_cb)
         layout.addStretch()
 
         # Nav Buttons
         btn_layout = QHBoxLayout()
         btn_layout.addStretch()
-        finish_btn = QPushButton("Finish")
-        finish_btn.clicked.connect(self.finish_installation)
-        btn_layout.addWidget(finish_btn)
+        
+        close_btn = QPushButton("Close")
+        close_btn.setObjectName("secondary")
+        close_btn.clicked.connect(self.close)
+        
+        launch_btn = QPushButton("Launch Application")
+        launch_btn.clicked.connect(self.launch_application_now)
+        
+        btn_layout.addWidget(close_btn)
+        btn_layout.addWidget(launch_btn)
         layout.addLayout(btn_layout)
 
         self.stack.addWidget(page)
@@ -592,7 +588,7 @@ class InstallerApp(QMainWindow):
 
     def start_installation(self):
         self.stack.setCurrentIndex(3) # Show progress screen
-        self.worker = InstallWorker(self.default_dest, self.shortcut_cb.isChecked(), self.run_cb.isChecked())
+        self.worker = InstallWorker(self.default_dest, self.shortcut_cb.isChecked())
         
         # Connect signals
         self.worker.progress.connect(self.progress_bar.setValue)
@@ -618,15 +614,13 @@ class InstallerApp(QMainWindow):
             btn_layout.addWidget(close_btn)
             self.centralWidget().layout().addLayout(btn_layout)
 
-    def finish_installation(self):
-        if self.run_cb.isChecked():
-            # Start the application
-            app_path = os.path.normpath(os.path.join(self.default_dest, "venv", "Scripts", "pythonw.exe"))
-            script_path = os.path.normpath(os.path.join(self.default_dest, "main.py"))
-            
-            if os.path.exists(app_path) and os.path.exists(script_path):
-                subprocess.Popen([app_path, script_path], cwd=self.default_dest)
+    def launch_application_now(self):
+        # Start the application
+        app_path = os.path.normpath(os.path.join(self.default_dest, "venv", "Scripts", "pythonw.exe"))
+        script_path = os.path.normpath(os.path.join(self.default_dest, "main.py"))
         
+        if os.path.exists(app_path) and os.path.exists(script_path):
+            subprocess.Popen([app_path, script_path], cwd=self.default_dest)
         self.close()
 
 if __name__ == "__main__":

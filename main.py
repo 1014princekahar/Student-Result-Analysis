@@ -10,21 +10,58 @@ try:
 except Exception:
     pass
 
+# Show splash screen instantly before importing heavy packages
+from PySide6.QtWidgets import QApplication, QSplashScreen
+from PySide6.QtGui import QPixmap, QIcon, QColor
+from PySide6.QtCore import Qt
+
+app = QApplication(sys.argv)
+app.setAttribute(Qt.AA_EnableHighDpiScaling)
+app.setAttribute(Qt.AA_UseHighDpiPixmaps)
+
+if getattr(sys, 'frozen', False):
+    # Running in a PyInstaller bundle
+    BASE_DIR = os.path.dirname(sys.executable)
+    ASSETS_DIR = os.path.join(sys._MEIPASS, 'assets')
+else:
+    # Running in a normal Python environment
+    BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+    ASSETS_DIR = os.path.join(BASE_DIR, 'assets')
+
+LOGO_PATH = os.path.join(ASSETS_DIR, 'logo.png')
+ICON_PATH = os.path.join(ASSETS_DIR, 'icon.ico')
+SASCMA_PDF_HEADER_PATH = os.path.join(ASSETS_DIR, 'sascma_pdf_header.png')
+UNIVERSITY_PDF_HEADER_PATH = os.path.join(ASSETS_DIR, 'university_pdf_header.png')
+PDF_HEADER_PATH = UNIVERSITY_PDF_HEADER_PATH
+COURSE_NAME = "SASCMA – STERS  |  VNSGU"
+
+splash = None
+if os.path.exists(LOGO_PATH):
+    try:
+        pix = QPixmap(LOGO_PATH)
+        scaled_pix = pix.scaled(280, 280, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+        splash = QSplashScreen(scaled_pix)
+        splash.setWindowFlags(Qt.WindowStaysOnTopHint | Qt.FramelessWindowHint)
+        splash.show()
+        splash.showMessage("Loading Student Result Analyzer...", Qt.AlignBottom | Qt.AlignCenter, QColor("#0c1a3a"))
+        app.processEvents()
+    except Exception:
+        pass
+
 import sqlite3
 import pandas as pd
 import time
-from PySide6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, 
+from PySide6.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, 
                                QHBoxLayout, QPushButton, QLabel, QStackedWidget, 
                                QListWidget, QListWidgetItem, QFrame, QFileDialog, 
                                QTableWidget, QTableWidgetItem, QProgressBar, 
                                QMessageBox, QComboBox, QHeaderView, QGraphicsDropShadowEffect, 
-                               QGroupBox, QSizePolicy, QLineEdit, QSpinBox, QTabWidget, QLabel,
+                               QGroupBox, QSizePolicy, QLineEdit, QSpinBox, QTabWidget,
                                QScrollArea, QAbstractItemView, QDialog, QButtonGroup, QRadioButton
                               )
-from PySide6.QtCore import Qt, QThread, Signal, QTimer, QStandardPaths, QSize, QMargins, QPropertyAnimation, QEasingCurve
-from PySide6.QtGui import QFont, QIcon, QColor, QPixmap, QCursor, QKeySequence, QShortcut, QPainter, QPen, QBrush, QFontMetrics
+from PySide6.QtCore import QThread, Signal, QTimer, QStandardPaths, QSize, QMargins, QPropertyAnimation, QEasingCurve
+from PySide6.QtGui import QFont, QCursor, QKeySequence, QShortcut, QPainter, QPen, QBrush, QFontMetrics
 from PySide6.QtCore import QDate, QRect
-from PySide6.QtWidgets import QSplashScreen
 from PySide6.QtCore import QObject
 try:
     from PySide6.QtPrintSupport import QPrinter, QPrintDialog
@@ -44,25 +81,6 @@ from reportlab.lib.pagesizes import A4, landscape
 from reportlab.lib.styles import getSampleStyleSheet
 from reportlab.lib.units import inch
 from reportlab.platypus import SimpleDocTemplate, Table as PdfTable, TableStyle, Paragraph, Spacer
-
-# ==============================================================================
-# 1. PATHS & ASSETS
-# ==============================================================================
-if getattr(sys, 'frozen', False):
-    # Running in a PyInstaller bundle
-    BASE_DIR = os.path.dirname(sys.executable)
-    ASSETS_DIR = os.path.join(sys._MEIPASS, 'assets')
-else:
-    # Running in a normal Python environment
-    BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-    ASSETS_DIR = os.path.join(BASE_DIR, 'assets')
-
-LOGO_PATH = os.path.join(ASSETS_DIR, 'logo.png')
-ICON_PATH = os.path.join(ASSETS_DIR, 'icon.ico')
-SASCMA_PDF_HEADER_PATH = os.path.join(ASSETS_DIR, 'sascma_pdf_header.png')
-UNIVERSITY_PDF_HEADER_PATH = os.path.join(ASSETS_DIR, 'university_pdf_header.png')
-PDF_HEADER_PATH = UNIVERSITY_PDF_HEADER_PATH
-COURSE_NAME = "SASCMA – STERS  |  VNSGU"
 
 # ==============================================================================
 # 2. IMPORT PARSING LOGIC (Robust Import)
@@ -4980,9 +4998,9 @@ class StudentAnalyzerApp(QMainWindow):
 # 8. ENTRY POINT
 # ==============================================================================
 if __name__ == "__main__":
-    app = QApplication(sys.argv)
-    app.setAttribute(Qt.AA_EnableHighDpiScaling)
-    app.setAttribute(Qt.AA_UseHighDpiPixmaps)
     if os.path.exists(ICON_PATH): app.setWindowIcon(QIcon(ICON_PATH))
     window = StudentAnalyzerApp()
+    if splash:
+        splash.finish(window)
+    window.show()
     sys.exit(app.exec())
