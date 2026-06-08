@@ -46,23 +46,23 @@ goto :build_both
 :build_app
 echo.
 echo [INFO] Compiling main.py into standalone App...
-pyinstaller --noconfirm --onefile --windowed --add-data "assets;assets" --add-data "core;core" --icon="assets/icon.ico" --name="StudentResultAnalyzer" --specpath="build_out" --workpath="build_out/build" --distpath="build_out/dist" main.py
+pyinstaller --noconfirm --onefile --windowed --add-data "assets;assets" --add-data "core;core" --icon="%~dp0assets\icon.ico" --name="StudentResultAnalyzer" --specpath="build_out" --workpath="build_out/build" --distpath="build_out/dist" main.py
 goto :build_finish
 
 :build_setup
 echo.
 echo [INFO] Compiling installer.py into Setup Wizard...
-pyinstaller --noconfirm --onefile --windowed --icon="assets/icon.ico" --name="Setup_StudentResultAnalyzer" --specpath="build_out" --workpath="build_out/build" --distpath="build_out/dist" installer.py
+pyinstaller --noconfirm --onefile --windowed --icon="%~dp0assets\icon.ico" --name="Setup_StudentResultAnalyzer" --specpath="build_out" --workpath="build_out/build" --distpath="build_out/dist" installer.py
 goto :build_finish
 
 :build_both
 echo.
 echo [INFO] Compiling main.py into standalone App...
-pyinstaller --noconfirm --onefile --windowed --add-data "assets;assets" --add-data "core;core" --icon="assets/icon.ico" --name="StudentResultAnalyzer" --specpath="build_out" --workpath="build_out/build" --distpath="build_out/dist" main.py
+pyinstaller --noconfirm --onefile --windowed --add-data "assets;assets" --add-data "core;core" --icon="%~dp0assets\icon.ico" --name="StudentResultAnalyzer" --specpath="build_out" --workpath="build_out/build" --distpath="build_out/dist" main.py
 
 echo.
 echo [INFO] Compiling installer.py into Setup Wizard...
-pyinstaller --noconfirm --onefile --windowed --icon="assets/icon.ico" --name="Setup_StudentResultAnalyzer" --specpath="build_out" --workpath="build_out/build" --distpath="build_out/dist" installer.py
+pyinstaller --noconfirm --onefile --windowed --icon="%~dp0assets\icon.ico" --name="Setup_StudentResultAnalyzer" --specpath="build_out" --workpath="build_out/build" --distpath="build_out/dist" installer.py
 goto :build_finish
 
 :build_finish
