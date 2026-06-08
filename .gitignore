@@ -88,3 +88,9 @@ scratch/
 # ===========================
 *.pyc
 *.pyo
+
+# ===========================
+# PyInstaller Build Output Directory
+# ===========================
+build_out/
+*.spec
