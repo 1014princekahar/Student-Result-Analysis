@@ -1929,17 +1929,18 @@ class StudentAnalyzerApp(QMainWindow):
         # Table Section
         table_outer, _, _, table_inner = make_section_card("🏆  Ranking Table", collapsible=False)
         self.top_n_table = SmoothTableWidget()
-        self.top_n_table.setColumnCount(6)
-        self.top_n_table.setHorizontalHeaderLabels(["Rank", "Roll No", "Name", "SGPA", "Total Marks", "Status"])
+        self.top_n_table.setColumnCount(7)
+        self.top_n_table.setHorizontalHeaderLabels(["Rank", "Roll No", "Name", "College", "SGPA", "Total Marks", "Status"])
         self.setup_table(self.top_n_table, row_height=36)
         self.top_n_table.setMinimumHeight(400)
         top_header = self.top_n_table.horizontalHeader()
         top_header.setSectionResizeMode(0, QHeaderView.ResizeToContents)
         top_header.setSectionResizeMode(1, QHeaderView.ResizeToContents)
         top_header.setSectionResizeMode(2, QHeaderView.Stretch)
-        top_header.setSectionResizeMode(3, QHeaderView.ResizeToContents)
+        top_header.setSectionResizeMode(3, QHeaderView.Stretch)
         top_header.setSectionResizeMode(4, QHeaderView.ResizeToContents)
         top_header.setSectionResizeMode(5, QHeaderView.ResizeToContents)
+        top_header.setSectionResizeMode(6, QHeaderView.ResizeToContents)
         table_inner.addWidget(self.top_n_table)
         layout.addWidget(table_outer)
         layout.addStretch()
@@ -1976,8 +1977,14 @@ class StudentAnalyzerApp(QMainWindow):
             self.top_n_table.setItem(r_idx, 0, QTableWidgetItem(rank_text))
             self.top_n_table.setItem(r_idx, 1, QTableWidgetItem(str(r_data['roll_no'])))
             self.top_n_table.setItem(r_idx, 2, QTableWidgetItem(str(r_data['name'])))
-            self.top_n_table.setItem(r_idx, 3, QTableWidgetItem(str(r_data['sgpa'])))
-            self.top_n_table.setItem(r_idx, 4, QTableWidgetItem(str(r_data['total'])))
+            
+            # College name (show if it does not start with "0349")
+            college_name = str(r_data.get('college', '')).strip()
+            college_display = "" if college_name.startswith('0349') else college_name
+            self.top_n_table.setItem(r_idx, 3, QTableWidgetItem(college_display))
+            
+            self.top_n_table.setItem(r_idx, 4, QTableWidgetItem(str(r_data['sgpa'])))
+            self.top_n_table.setItem(r_idx, 5, QTableWidgetItem(str(r_data['total'])))
 
             status_item = QTableWidgetItem(str(r_data['status']))
             if r_data['status'] == 'FAIL':
@@ -1986,7 +1993,7 @@ class StudentAnalyzerApp(QMainWindow):
             else:
                 status_item.setForeground(QColor("#16a34a"))
                 status_item.setBackground(QColor("#f0fdf4"))
-            self.top_n_table.setItem(r_idx, 5, status_item)
+            self.top_n_table.setItem(r_idx, 6, status_item)
 
     def create_failed_page(self):
         page = QWidget()
